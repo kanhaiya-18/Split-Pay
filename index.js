@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 4000;
 //import routes
 const routes = require("./routes/authRoutes");
 app.use("/api/v1",routes);
-
+app.use("/api/v1/bills", require("./routes/billRoutes"));
 //db connection
 const db_connection = require("./config/db");
 db_connection();

@@ -6,10 +6,10 @@ const groupSchema = new mongoose.Schema({
         required: true,
     },
     members:[{
-        type:mongoose.Schema.Types.ObjectId,ref:"user"
+        type:mongoose.Schema.Types.ObjectId,ref:"User"
     }],
     createdBy:{
-        type: mongoose.Schema.Types.ObjectId,ref:"user",
+        type: mongoose.Schema.Types.ObjectId,ref:"User",
         required: true
     }
 },{timestamps : true});

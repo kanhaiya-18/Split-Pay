@@ -66,6 +66,48 @@ exports.getGroup = async (req, res) => {
     }
 };
 
+//get all the details of the groups that a perticular person is in
+exports.getAllGroup = async(req,res) =>{
+    try{
+        //get the id of the person
+        const id = req.user.id;
+        if(!id)
+        {
+            return res.status(400).json({
+                success: false,
+                message: "no such person exist"
+            });
+        }
+        const groups = await Group.find({
+            $or : [
+                {createdBy : id},
+                {members : id}
+            ]
+        })
+        .populate("members" , "name email")
+        .populate("createdBy", "name email");
+        if(!groups.length)
+        {
+            return res.status(400).json({
+                success : false,
+                message : "the person is not in any group"
+            });
+        }
+        return res.status(200).json({
+            success : true,
+            message : "fetched data successfully",
+            groups
+        })
+
+    }catch(err)
+    {
+        return res.status(500).json({
+            success : false,
+            message : err.message
+        });
+    }
+}
+
 //delete the group
 exports.deleteGroup = async(req,res)=>{
     try

@@ -11,7 +11,9 @@ const PORT = process.env.PORT || 4000;
 
 //import routes
 const routes = require("./routes/authRoutes");
+const routesForInvite = require("./routes/inviteRoutes");
 app.use("/api/v1",routes);
+app.use("/api/v1",routesForInvite);
 app.use("/api/v1/bills", require("./routes/billRoutes"));
 //db connection
 const db_connection = require("./config/db");

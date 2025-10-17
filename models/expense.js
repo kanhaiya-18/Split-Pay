@@ -14,7 +14,7 @@ const expenseSchema = new mongoose.Schema({
     items: [{
         name: String,
         price: Number,
-        quantity: {type: Number,default : 1},
+        quantity: {type: Number,default : 0},
         assignedTo: [{
             type: mongoose.Schema.Types.ObjectId,
             ref: "User"

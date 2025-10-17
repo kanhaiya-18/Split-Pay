@@ -65,3 +65,30 @@ exports.getGroup = async (req, res) => {
         });
     }
 };
+
+//delete the group
+exports.deleteGroup = async(req,res)=>{
+    try
+    {
+        const id = req.params.id || req.body.id;
+        if(!id)
+        {
+            return res.status(400).json({
+                success: false,
+                message: "group doesn't exist"
+            });
+        }
+        await Group.findByIdAndDelete(id);
+        return res.status(200).json({
+            success: true,
+            message: "succussfully deleted the group"
+        });
+    }
+    catch(err)
+    {
+        return res.status(500).json({
+            success: false,
+            message: `couldn't delete the group ${err.message}`
+        });
+    }
+}

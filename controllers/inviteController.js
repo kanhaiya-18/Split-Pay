@@ -115,3 +115,21 @@ exports.rejectInvite = async(req,res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 }
+
+//get all the pending invites
+exports.getPendingInvite = async(req,res) =>{
+    try{
+        const userId = req.user.id;
+        const invites = await Invite.find({
+            receiver : userId,
+            status : "pending"
+        })
+        .populate("group" , "groupName")
+        .populate("sender" , "name email");
+        res.status(200).json({ success: true, count: invites.length, invites });
+    }
+    catch(errr)
+    {
+        res.status(500).json({success: false, message : errr.message});
+    }
+}

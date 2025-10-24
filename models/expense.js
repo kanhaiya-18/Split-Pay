@@ -9,9 +9,11 @@ const paymentSchema = new mongoose.Schema({
 });
 
 const assignmentSchema = new mongoose.Schema({
-    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    from: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // owes money
+    to: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },   // to be paid
     amount: { type: Number, required: true }
 });
+
 
 const itemSchema = new mongoose.Schema({
     name: String,

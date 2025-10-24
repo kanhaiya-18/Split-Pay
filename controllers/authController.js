@@ -140,4 +140,31 @@ exports.login = async (req, res) => {
             message: error.message
         });
     }
-}
+};
+//controller for getting user details
+exports.getUserDetails = async (req, res) => {
+    try {
+        const id = req.user.id;
+        const existingUser = await user.findById(id)
+        .select("name email youOwe youAreOwed") 
+        .populate("youOwe" , "name email")
+        .populate("youAreOwed" , "name email");
+        if (!existingUser) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+        res.status(200).json({
+            success: true,
+            user: existingUser,
+            message: "User details fetched successfully"
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+
+};

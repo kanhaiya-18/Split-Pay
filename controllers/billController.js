@@ -1,63 +1,64 @@
 const Expense = require("../models/expense");
 const Group = require("../models/Group");
+const User = require("../models/user");
 const mongoose = require("mongoose");
 const extractTextFromImage = require("../utils/ocr");
 const parseBillText = require("../utils/llmParser");
 
 exports.uploadBill = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "No file uploaded",
-      });
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: "No file uploaded",
+            });
+        }
+
+        // 🧠 Step 1: Extract text from image (OCR)
+        const text = await extractTextFromImage(req.file.path);
+        // console.log("🧾 Extracted Text:", text);
+
+        // 🧩 Step 2: Parse structured data using Gemini
+        const structuredData = await parseBillText(text);
+
+        if (!structuredData || !structuredData.items) {
+            return res.status(500).json({
+                success: false,
+                message: "Failed to parse bill text from Gemini",
+            });
+        }
+
+        // 🧮 Step 3: Calculate total amount if Gemini didn't provide one
+        const total =
+            structuredData.total ||
+            structuredData.items.reduce(
+                (sum, item) => sum + (item.price || 0) * (item.quantity || 1),
+                0
+            );
+
+        // 🧱 Step 4: Create Expense in MongoDB with parsed details
+        const expense = await Expense.create({
+            group: req.body.groupId,
+            createdBy: req.user.id,
+            billImageUrl: req.file.path,
+            totalAmount: total,
+            items: structuredData.items,
+            splitMethod: "equal",
+        });
+
+        // ✅ Step 5: Send structured data to frontend
+        res.status(200).json({
+            success: true,
+            expense,
+            message: "Bill uploaded, parsed, and saved successfully",
+        });
+    } catch (err) {
+        console.error("💥 Error in uploadBill:", err.message);
+        res.status(500).json({
+            success: false,
+            message: err.message,
+        });
     }
-
-    // 🧠 Step 1: Extract text from image (OCR)
-    const text = await extractTextFromImage(req.file.path);
-    console.log("🧾 Extracted Text:", text);
-
-    // 🧩 Step 2: Parse structured data using Gemini
-    const structuredData = await parseBillText(text);
-
-    if (!structuredData || !structuredData.items) {
-      return res.status(500).json({
-        success: false,
-        message: "Failed to parse bill text from Gemini",
-      });
-    }
-
-    // 🧮 Step 3: Calculate total amount if Gemini didn't provide one
-    const total =
-      structuredData.total ||
-      structuredData.items.reduce(
-        (sum, item) => sum + (item.price || 0) * (item.quantity || 1),
-        0
-      );
-
-    // 🧱 Step 4: Create Expense in MongoDB with parsed details
-    const expense = await Expense.create({
-      group: req.body.groupId,
-      createdBy: req.user.id,
-      billImageUrl: req.file.path,
-      totalAmount: total,
-      items: structuredData.items,
-      splitMethod: "equal",
-    });
-
-    // ✅ Step 5: Send structured data to frontend
-    res.status(200).json({
-      success: true,
-      expense,
-      message: "Bill uploaded, parsed, and saved successfully",
-    });
-  } catch (err) {
-    console.error("💥 Error in uploadBill:", err.message);
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
 };
 
 
@@ -104,7 +105,8 @@ exports.getBillDetails = async (req, res) => {
         const expense = await Expense.findById(expenseId)
             .populate("group", "groupName members")
             .populate("createdBy", "name email")
-            .populate("assignments.user", "name email");
+            .populate("assignments.from", "name email")
+            .populate("assignments.to", "name email");
         if (!expense) {
             return res.status(404).json({ success: false, message: "Expense not found" });
         }
@@ -130,15 +132,17 @@ exports.assignMoney = async (req, res) => {
         // validate users belong to the group
         const groupMembersIds = (await Group.findById(expense.group._id)).members.map(m => m.toString());
         let sumAssigned = 0;
+        // Validate users belong to group
         for (let a of assignments) {
-            if (!a.user || typeof a.amount !== "number") {
-                return res.status(400).json({ success: false, message: "Each assignment needs user and numeric amount" });
+            if (!a.from || !a.to || typeof a.amount !== "number") {
+                return res.status(400).json({ success: false, message: "Each assignment needs from, to, and numeric amount" });
             }
-            if (!groupMembersIds.includes(a.user.toString())) {
-                return res.status(400).json({ success: false, message: `${a.user} doesn't exist in the group` });
+            if (!groupMembersIds.includes(a.from.toString()) || !groupMembersIds.includes(a.to.toString())) {
+                return res.status(400).json({ success: false, message: `Invalid assignment: ${a.from} or ${a.to} not in group` });
             }
             sumAssigned += Number(a.amount || 0);
         }
+
         // allow small rounding tolerance (0.5)
         const tolerance = 0.5;
         if (Math.abs(sumAssigned - (expense.totalAmount || 0)) > tolerance) {
@@ -149,13 +153,71 @@ exports.assignMoney = async (req, res) => {
         }
 
         //now save assignment
-        expense.assignments = assignments.map(a => ({ user: a.user, amount: a.amount }));
+        expense.assignments = assignments.map(a => ({
+            from: a.from, // who owes
+            to: a.to,     // who should receive
+            amount: a.amount
+        }));
+
         expense.splitMethod = "money";
         await expense.save();
         return res.status(200).json({ success: true, expense, message: "assigned money successfully to the members" });
     }
     catch (err) {
         return res.status(500).json({ success: false, message: err.message });
+    }
+};
+exports.settleAssignments = async (req, res) => {
+    try {
+        const { expenseId } = req.body;
+        const { id: requestedId } = req.user;
+
+        if (!expenseId) return res.status(400).json({ success: false, message: "Missing expenseId" });
+
+        const expense = await Expense.findById(expenseId)
+            .populate("assignments.from")
+            .populate("assignments.to")
+            .populate("group");
+
+        if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
+        if (!expense.group.members.map(m => m.toString()).includes(requestedId)) {
+            return res.status(403).json({ success: false, message: "You are not a member of this group" });
+        }
+
+        for (const a of expense.assignments) {
+            if (!a || a.amount <= 0) continue;
+
+            const fromId = a.from?._id?.toString() || a.from?.toString();
+            const toId = a.to?._id?.toString() || a.to?.toString();
+
+            // 🧩 Skip invalid or self-assigning transactions
+            if (!fromId || !toId || fromId === toId) continue;
+
+            // 🟢 Increase receiver’s “youAreOwed”
+            await User.findByIdAndUpdate(toId, {
+                $inc: { youAreOwed: a.amount }
+            });
+
+            // 🔴 Increase payer’s “youOwe”
+            await User.findByIdAndUpdate(fromId, {
+                $inc: { youOwe: a.amount }
+            });
+        }
+
+
+        const updatedExpense = await Expense.findById(expenseId)
+            .populate("assignments.from", "name email")
+            .populate("assignments.to", "name email")
+            .populate("group", "groupName");
+
+        res.status(200).json({
+            success: true,
+            message: "Assignments settled successfully",
+            expense: updatedExpense
+        });
+    } catch (err) {
+        console.error("Error in settleAssignments:", err);
+        res.status(500).json({ success: false, message: err.message });
     }
 };
 
@@ -222,7 +284,15 @@ exports.recordPayment = async (req, res) => {
             .populate("payments.user", "name email")
             .populate("assignments.user", "name email")
             .populate("group", "groupName");
-
+        //update the user db 
+        // const UpdatedinUser = await User.findByIdAndUpdate(
+        //     payerId,
+        //     { $inc: { youAreOwed: amount } },
+        //     { new: true }
+        // );
+        if (!UpdatedinUser) {
+            return res.status(400).json({ success: false, message: "it has not been updated in userDB" });
+        }
         // Return
         return res.status(200).json({
             success: true,

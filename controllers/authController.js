@@ -43,7 +43,28 @@ exports.signUp = async (req, res) => {
         });
     }
 }
-
+exports.updateProfile = async (req, res) => {
+    try{
+        const { name,email } = req.body;
+        const updatedUser = await user.findOneAndUpdate({email}, { name }, { new: true });
+        if(!updatedUser){
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+        res.status(200).json({
+            success: true,
+            message: "Profile updated successfully",
+            user: updatedUser
+        });
+    }
+    catch(error){
+        res.status(500).json({
+            message: error.message
+        });
+    }
+};
 //controller for login
 exports.login = async (req, res) => {
     try {

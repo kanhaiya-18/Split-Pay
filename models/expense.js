@@ -1,32 +1,42 @@
+// models/Expense.js
 const mongoose = require("mongoose");
+
+const paymentSchema = new mongoose.Schema({
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    amount: { type: Number, required: true },
+    method: { type: String }, // optional (UPI, cash, card...)
+    createdAt: { type: Date, default: Date.now }
+});
+
+const assignmentSchema = new mongoose.Schema({
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    amount: { type: Number, required: true }
+});
+
+const itemSchema = new mongoose.Schema({
+    name: String,
+    price: Number,
+    quantity: { type: Number, default: 1 },
+    assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }]
+});
+
 const expenseSchema = new mongoose.Schema({
-    group: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Group",
-        required: true
-    },
-    createdBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-        required: true
-    },
+    group: { type: mongoose.Schema.Types.ObjectId, ref: "Group", required: true },
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     billImageUrl: String,
-    items: [{
-        name: String,
-        price: Number,
-        quantity: {type: Number,default : 0},
-        assignedTo: [{
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "User"
-        }]
-    }],
-    splitMethod: {
-        type: String,
-        enum: ["equal", "per-item"],
-        default: "equal"
-    },
-    totalAmount: Number
+    items: [itemSchema],
+    splitMethod: { type: String, enum: ["equal", "per-item", "money"], default: "equal" },
+    totalAmount: { type: Number, default: 0 },
 
-},{timestamps: true});
+    // NEW:
+    payments: [paymentSchema],       // who actually paid
+    assignments: [assignmentSchema], // money-only assignments by frontend
 
-module.exports = mongoose.model("Expense",expenseSchema);
+    // optional cache
+    splitSummary: [{
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        amountOwed: Number
+    }]
+}, { timestamps: true });
+
+module.exports = mongoose.model("Expense", expenseSchema);

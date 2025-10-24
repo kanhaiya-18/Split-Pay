@@ -1,69 +1,336 @@
 const Expense = require("../models/expense");
+const Group = require("../models/Group");
+const mongoose = require("mongoose");
 const extractTextFromImage = require("../utils/ocr");
 const parseBillText = require("../utils/llmParser");
 
 exports.uploadBill = async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ success: false, message: "No file uploaded" });
-        }
-        //run ocr
-        const text = await extractTextFromImage(req.file.path);
-
-        const expense = await Expense.create({
-            group: req.body.groupId,
-            createdBy: req.user.id,
-            billImageUrl: req.file.path,
-            totalAmount: 0, // will update after parsing
-            items: []
-        });
-        res.status(200).json({
-            success: true,
-            expenseId : expense._id,
-            rawText : text,
-            message : "bill uploaded and ocr extracted"
-        });
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No file uploaded",
+      });
     }
-    catch(err)
-    {
-        res.status(500).json({
+
+    // 🧠 Step 1: Extract text from image (OCR)
+    const text = await extractTextFromImage(req.file.path);
+    console.log("🧾 Extracted Text:", text);
+
+    // 🧩 Step 2: Parse structured data using Gemini
+    const structuredData = await parseBillText(text);
+
+    if (!structuredData || !structuredData.items) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to parse bill text from Gemini",
+      });
+    }
+
+    // 🧮 Step 3: Calculate total amount if Gemini didn't provide one
+    const total =
+      structuredData.total ||
+      structuredData.items.reduce(
+        (sum, item) => sum + (item.price || 0) * (item.quantity || 1),
+        0
+      );
+
+    // 🧱 Step 4: Create Expense in MongoDB with parsed details
+    const expense = await Expense.create({
+      group: req.body.groupId,
+      createdBy: req.user.id,
+      billImageUrl: req.file.path,
+      totalAmount: total,
+      items: structuredData.items,
+      splitMethod: "equal",
+    });
+
+    // ✅ Step 5: Send structured data to frontend
+    res.status(200).json({
+      success: true,
+      expense,
+      message: "Bill uploaded, parsed, and saved successfully",
+    });
+  } catch (err) {
+    console.error("💥 Error in uploadBill:", err.message);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+
+// Parse OCR output into structured data
+// exports.parseBill = async (req, res) => {
+//     try {
+//         const { expenseId, rawText } = req.body;
+//         if (!expenseId || !rawText) {
+//             return res.status(400).json({ success: false, message: "Missing expenseId or rawText" });
+//         }
+
+//         const structuredData = await parseBillText(rawText);
+
+//         if (!structuredData) {
+//             return res.status(500).json({ success: false, message: "Failed to parse bill text" });
+//         }
+
+//         // Calculate total amount
+//         const total = structuredData.total || structuredData.items.reduce((acc, item) => acc + (item.price * (item.quantity || 1)), 0);
+
+//         // Update the Expense with parsed data
+//         const updatedExpense = await Expense.findByIdAndUpdate(
+//             expenseId,
+//             { items: structuredData.items, totalAmount: total },
+//             { new: true }
+//         );
+
+//         res.status(200).json({
+//             success: true,
+//             expense: updatedExpense,
+//             message: "Bill parsed and saved successfully"
+//         });
+//     } catch (err) {
+//         res.status(500).json({ success: false, message: err.message });
+//     }
+// };
+//sent the bils's details to frontend
+exports.getBillDetails = async (req, res) => {
+    try {
+        const { expenseId } = req.params;
+        if (!expenseId) {
+            return res.status(400).json({ success: false, message: "Missing expenseId" });
+        }
+        const expense = await Expense.findById(expenseId)
+            .populate("group", "groupName members")
+            .populate("createdBy", "name email")
+            .populate("assignments.user", "name email");
+        if (!expense) {
+            return res.status(404).json({ success: false, message: "Expense not found" });
+        }
+        res.status(200).json({ success: true, expense, message: "Expense details fetched successfully" });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+//assign the amount to the members of the group 
+exports.assignMoney = async (req, res) => {
+    try {
+        const { expenseId, assignments } = req.body;
+        if (!expenseId || !assignments) {
+            return res.status(400).json({ success: false, message: "expenseId or assignment doesn't exist" });
+        }
+        // get the expense from expenseId
+        const expense = await Expense.findById(expenseId).populate("group");
+        if (!expense) {
+            return res.status(404).json({ success: false, message: "expense not found" });
+        }
+        // validate users belong to the group
+        const groupMembersIds = (await Group.findById(expense.group._id)).members.map(m => m.toString());
+        let sumAssigned = 0;
+        for (let a of assignments) {
+            if (!a.user || typeof a.amount !== "number") {
+                return res.status(400).json({ success: false, message: "Each assignment needs user and numeric amount" });
+            }
+            if (!groupMembersIds.includes(a.user.toString())) {
+                return res.status(400).json({ success: false, message: `${a.user} doesn't exist in the group` });
+            }
+            sumAssigned += Number(a.amount || 0);
+        }
+        // allow small rounding tolerance (0.5)
+        const tolerance = 0.5;
+        if (Math.abs(sumAssigned - (expense.totalAmount || 0)) > tolerance) {
+            return res.status(400).json({
+                success: false,
+                message: `Assigned sum (${sumAssigned}) does not match totalAmount (${expense.totalAmount}).`
+            });
+        }
+
+        //now save assignment
+        expense.assignments = assignments.map(a => ({ user: a.user, amount: a.amount }));
+        expense.splitMethod = "money";
+        await expense.save();
+        return res.status(200).json({ success: true, expense, message: "assigned money successfully to the members" });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+// Record the payment
+exports.recordPayment = async (req, res) => {
+    try {
+        const { expenseId, amount, method, paidBy } = req.body;
+        const requestedId = req.user.id;
+        const payerId = paidBy || requestedId;
+
+        if (!expenseId || !amount) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide expenseId and amount"
+            });
+        }
+
+        //  Find the expense
+        const expense = await Expense.findById(expenseId).populate("group");
+        if (!expense) {
+            return res.status(404).json({
+                success: false,
+                message: "Expense not found"
+            });
+        }
+
+        // Find the group
+        const group = await Group.findById(expense.group);
+        if (!group) {
+            return res.status(404).json({
+                success: false,
+                message: "Group not found"
+            });
+        }
+
+        // Validate that both users are group members
+        const groupMemberIds = group.members.map(m => m.toString());
+        if (!groupMemberIds.includes(requestedId)) {
+            return res.status(403).json({
+                success: false,
+                message: "You are not a member of this group"
+            });
+        }
+
+        if (!groupMemberIds.includes(payerId)) {
+            return res.status(400).json({
+                success: false,
+                message: "The specified payer is not a member of this group"
+            });
+        }
+        //Actually record the payment now
+        if (!expense.payments) expense.payments = [];
+        expense.payments.push({
+            user: payerId,
+            amount,
+            method: method || "cash"
+        });
+
+        // Save the expense
+        await expense.save();
+
+        //  Fetch populated version for clean response
+        const updatedExpense = await Expense.findById(expenseId)
+            .populate("payments.user", "name email")
+            .populate("assignments.user", "name email")
+            .populate("group", "groupName");
+
+        // Return
+        return res.status(200).json({
+            success: true,
+            message: `Payment of ₹${amount} recorded successfully (paid by user ${payerId})`,
+            expense: updatedExpense
+        });
+    } catch (err) {
+        console.error("Error in recordPayment:", err);
+        return res.status(500).json({
             success: false,
-            message : err.message
+            message: err.message
         });
     }
 };
 
 
-// Parse OCR output into structured data
-exports.parseBill = async (req, res) => {
+exports.splitExpense = async (req, res) => {
     try {
-        const { expenseId, rawText } = req.body;
-        if (!expenseId || !rawText) {
-            return res.status(400).json({ success: false, message: "Missing expenseId or rawText" });
+        const { expenseId } = req.params;
+
+        // 1️⃣ Fetch expense with all populated fields
+        const expense = await Expense.findById(expenseId)
+            .populate("assignments.user", "name email")
+            .populate("payments.user", "name email")
+            .populate("group", "groupName");
+
+        if (!expense) {
+            return res.status(404).json({ success: false, message: "Expense not found" });
         }
 
-        const structuredData = await parseBillText(rawText);
+        const totalAmount = expense.totalAmount;
+        const perUser = [];
 
-        if (!structuredData) {
-            return res.status(500).json({ success: false, message: "Failed to parse bill text" });
+        // 2️⃣ Build a map of assigned and paid
+        const assignedMap = {};
+        for (const a of expense.assignments || []) {
+            const userId =
+                typeof a.user === "object" ? a.user._id.toString() : a.user.toString();
+            assignedMap[userId] = (assignedMap[userId] || 0) + a.amount;
         }
 
-        // Calculate total amount
-        const total = structuredData.total || structuredData.items.reduce((acc, item) => acc + (item.price * (item.quantity || 1)), 0);
+        const paidMap = {};
+        for (const p of expense.payments || []) {
+            const userId =
+                typeof p.user === "object" ? p.user._id.toString() : p.user.toString();
+            paidMap[userId] = (paidMap[userId] || 0) + p.amount;
+        }
 
-        // Update the Expense with parsed data
-        const updatedExpense = await Expense.findByIdAndUpdate(
-            expenseId,
-            { items: structuredData.items, totalAmount: total },
-            { new: true }
-        );
+        // 3️⃣ Collect all users from both maps
+        const userIds = new Set([...Object.keys(assignedMap), ...Object.keys(paidMap)]);
 
+        // 4️⃣ Build per-user summary
+        for (const userId of userIds) {
+            const assigned = assignedMap[userId] || 0;
+            const paid = paidMap[userId] || 0;
+            const net = paid - assigned;
+
+            const user =
+                expense.assignments.find(a => a.user._id?.toString() === userId)?.user ||
+                expense.payments.find(p => p.user._id?.toString() === userId)?.user;
+
+            perUser.push({
+                userId,
+                name: user?.name || "Unknown",
+                email: user?.email || "",
+                assigned,
+                paid,
+                net
+            });
+        }
+
+        // 5️⃣ Calculate settlements (who owes whom)
+        const debtors = perUser.filter(u => u.net < 0);
+        const creditors = perUser.filter(u => u.net > 0);
+        const settlements = [];
+
+        for (const debtor of debtors) {
+            let amountToSettle = Math.abs(debtor.net);
+
+            for (const creditor of creditors) {
+                if (amountToSettle <= 0) break;
+
+                const payAmount = Math.min(amountToSettle, creditor.net);
+                if (payAmount > 0) {
+                    settlements.push({
+                        from: debtor.name,
+                        to: creditor.name,
+                        amount: payAmount
+                    });
+
+                    debtor.net += payAmount;
+                    creditor.net -= payAmount;
+                    amountToSettle -= payAmount;
+                }
+            }
+        }
+
+        // 6️⃣ Send response
         res.status(200).json({
             success: true,
-            expense: updatedExpense,
-            message: "Bill parsed and saved successfully"
+            totalAmount,
+            splitMethod: expense.splitMethod,
+            perUser,
+            settlements,
+            message: "Split calculated successfully"
         });
     } catch (err) {
+        console.error("💥 Split error:", err.message);
         res.status(500).json({ success: false, message: err.message });
     }
 };

@@ -43,6 +43,7 @@ exports.signUp = async (req, res) => {
         });
     }
 }
+//controller for updating profile
 exports.updateProfile = async (req, res) => {
     try{
         const { name,email } = req.body;
@@ -62,6 +63,40 @@ exports.updateProfile = async (req, res) => {
     catch(error){
         res.status(500).json({
             message: error.message
+        });
+    }
+};
+//controller for changing password
+exports.changePassword = async (req, res) => {
+    try{
+        const { email, oldPassword, newPassword } = req.body;
+        const existingUser = await user.findOne({ email });
+        if(!existingUser){
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+        const isMatch = await bcrypt.compare(oldPassword, existingUser.password);
+        if(!isMatch){
+            return res.status(400).json({
+                success: false,
+                message: "Old password is incorrect"
+            });
+        }
+        const hashNewPass = await bcrypt.hash(newPassword, 10);
+        existingUser.password = hashNewPass;
+        await existingUser.save();
+        res.status(200).json({
+            success: true,
+            message: "Password changed successfully"
+        });
+    }
+    catch(err)
+    {
+        res.status(500).json({
+            success: false,
+            message: err.message
         });
     }
 };

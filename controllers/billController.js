@@ -144,13 +144,13 @@ exports.assignMoney = async (req, res) => {
         }
 
         // allow small rounding tolerance (0.5)
-        const tolerance = 0.5;
-        if (Math.abs(sumAssigned - (expense.totalAmount || 0)) > tolerance) {
-            return res.status(400).json({
-                success: false,
-                message: `Assigned sum (${sumAssigned}) does not match totalAmount (${expense.totalAmount}).`
-            });
-        }
+        // const tolerance = 0.5;
+        // if (Math.abs(sumAssigned - (expense.totalAmount || 0)) > tolerance) {
+        //     return res.status(400).json({
+        //         success: false,
+        //         message: `Assigned sum (${sumAssigned}) does not match totalAmount (${expense.totalAmount}).`
+        //     });
+        // }
 
         //now save assignment
         expense.assignments = assignments.map(a => ({

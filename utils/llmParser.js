@@ -5,17 +5,17 @@ async function parseBillText(ocrText) {
   Extract all items from this restaurant bill and return ONLY valid JSON.
   Each item should include:
   - name (string)
-  - price (number, total for that line)
+  - price (number, per unit)
   - quantity (number, if mentioned; otherwise assume 1)
   Also include the total bill amount as "total".
 
   Example format:
   {
     "items": [
-      { "name": "Paneer Butter Masala", "price": 80, "quantity": 2 },
+      { "name": "Paneer Butter Masala", "price": 80, "quantity": 2," },
       { "name": "Kerala Parata", "price": 20, "quantity": 4 }
     ],
-    "total": 320
+    "total": 240
   }
 
   Bill text:

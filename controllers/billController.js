@@ -167,6 +167,47 @@ exports.assignMoney = async (req, res) => {
         return res.status(500).json({ success: false, message: err.message });
     }
 };
+//assign monyey equally to the users provided by the frontend
+exports.assignEqually = async (req, res) => {
+    try {
+        const { expenseId, userIds, paidBy, groupId } = req.body;
+        if (!expenseId || !userIds || !paidBy || !Array.isArray(userIds) || userIds.length === 0) {
+            return res.status(400).json({ success: false, message: "expenseId or userIds are missing/invalid" });
+        }
+
+        const group = await Group.findById(groupId);
+        if (!group) {
+            return res.status(404).json({ success: false, message: "Group not found" });
+        }
+        //check if the user belongs to the group
+        for (const id of userIds) {
+            if (group.members.map(m => m.toString()).indexOf(id) === -1) {
+                return res.status(400).json({ success: false, message: `User ${id} is not a member of the group` });
+            }
+        }
+        const expense = await Expense.findById(expenseId).populate("group");
+        if (!expense) {
+            return res.status(404).json({ success: false, message: "Expense not found" });
+        }
+        const perUserAmount = parseFloat((expense.totalAmount / userIds.length).toFixed(2));
+        const assignments = [];
+        for (const userId of userIds) {
+            if (userId === paidBy) continue; // Skip the payer
+            assignments.push({
+                from: userId,
+                to: paidBy,
+                amount: perUserAmount
+            });
+        }
+        expense.assignments = assignments;
+        expense.splitMethod = "equal";
+        await expense.save();
+        return res.status(200).json({ success: true, expense, message: "Expense assigned equally successfully" });
+    }
+    catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
 exports.settleAssignments = async (req, res) => {
     try {
         const { expenseId } = req.body;

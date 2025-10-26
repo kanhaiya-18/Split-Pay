@@ -445,3 +445,31 @@ exports.splitExpense = async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 };
+
+//send the data of from to to to frontend
+exports.Settlements = async (req, res) => {
+    try {
+        const { group } = req.body;
+
+        if (!group) {
+            return res.status(400).json({ success: false, message: "Group ID missing" });
+        }
+
+        // Find expense by group field, not by _id
+        const expense = await Expense.find({ group }).populate("assignments");
+
+        if (!expense || expense.length === 0) {
+            return res.status(404).json({ success: false, message: "The bill (expense) doesn't exist" });
+        }
+
+        const allAssigments  = expense.map(exp => exp.assignments).flat();
+
+        res.status(200).json({
+            success: true,
+            allAssigments,
+            message: "Settlement sent to frontend"
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};

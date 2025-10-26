@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const auth = require("../middleware/auth");
 const upload = require("../middleware/upload");
-const { uploadBill,  assignMoney, recordPayment, splitExpense, getBillDetails, settleAssignments, assignEqually } = require("../controllers/billController");
+const { uploadBill,  assignMoney, recordPayment, splitExpense, getBillDetails, settleAssignments, assignEqually, Settlements } = require("../controllers/billController");
 // const { parse } = require("path");
 
 router.post("/upload", auth,upload.single("bill"),uploadBill);
@@ -12,6 +12,7 @@ router.get("/getBillDetails/:expenseId",auth,getBillDetails);
 router.patch("/assign-money",auth,assignMoney);
 router.patch("/assign-Equally",auth,assignEqually);
 router.post("/settleAssignment",auth,settleAssignments);
+router.get("/getAssignments",auth, Settlements);
 router.post("/payment",auth,recordPayment);
 router.get("/split/:expenseId",auth,splitExpense);
 module.exports = router;

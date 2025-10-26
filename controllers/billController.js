@@ -446,6 +446,49 @@ exports.splitExpense = async (req, res) => {
     }
 };
 
+//change the mark as paid to true when the payment is done
+exports.markAssignmentPaid = async (req, res) => {
+    try {
+        const { expenseId, assignmentId, amountPaid } = req.body;
+        if (!expenseId || !assignmentId || !amountPaid) {
+            return res.status(400).json({ success: false, message: "expenseId or assignmentId missing" });
+        }
+        const expense = await Expense.findById(expenseId);
+        if (!expense) {
+            return res.status(404).json({ success: false, message: "Expense not found" });
+        }
+        const assignment = expense.assignments.id(assignmentId);
+        if (!assignment) {
+            return res.status(404).json({ success: false, message: "Assignment not found" });
+        }
+        const currentUserId = req.user.id;
+        if (currentUserId.toString() !== assignment.to.toString()) {
+            return res.status(400).json({ success: false, message: "You are not authorized to mark this as paid" });
+        }
+        assignment.amount -= amountPaid;
+
+        assignment.isPaid = assignment.amount <= 0 ? true : false;
+        if (assignment.isPaid)
+            assignment.paidAt = new Date();
+
+        await expense.save();
+
+        const ower = await User.findById(assignment.from);
+        const receiver = await User.findById(assignment.to);
+
+        if (ower && receiver) {
+            ower.youOwe = Math.max(0, ower.youOwe - amountPaid);
+            receiver.youAreOwed = Math.max(0, receiver.youAreOwed - amountPaid);
+            await ower.save();
+            await receiver.save();
+        }
+        res.status(200).json({ success: true, expense, message: "Assignment marked as paid" });
+    }
+    catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
 //send the data of from to to to frontend
 exports.Settlements = async (req, res) => {
     try {
@@ -462,11 +505,25 @@ exports.Settlements = async (req, res) => {
             return res.status(404).json({ success: false, message: "The bill (expense) doesn't exist" });
         }
 
-        const allAssigments  = expense.map(exp => exp.assignments).flat();
+        const allAssignments = expense
+            .flatMap(exp =>
+                exp.assignments
+                    .filter(a => a.from.toString() !== a.to.toString())
+                    .map(a => ({
+                        _id: a._id,
+                        from: a.from,
+                        to: a.to,
+                        amount: a.amount,
+                        expenseId: exp._id,
+                        isPaid: a.isPaid || false,
+                        paidAt: a.paidAt || null
+                    }))
+            );
+
 
         res.status(200).json({
             success: true,
-            allAssigments,
+            allAssignments,
             message: "Settlement sent to frontend"
         });
     } catch (err) {

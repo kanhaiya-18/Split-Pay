@@ -11,7 +11,9 @@ const paymentSchema = new mongoose.Schema({
 const assignmentSchema = new mongoose.Schema({
     from: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // owes money
     to: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },   // to be paid
-    amount: { type: Number, required: true }
+    amount: { type: Number, required: true },
+    isPaid: { type: Boolean, default: false },
+    paidAt: { type: Date }
 });
 
 

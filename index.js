@@ -5,9 +5,7 @@ require("dotenv").config();
 
 //middlewares
 app.use(express.json());
-// allow CORS from all origins and enable preflight for all routes
-app.use(cors({ origin: '*' }));
-app.options('*', cors());
+app.use(cors());
 
 const PORT = process.env.PORT || 4000;
 

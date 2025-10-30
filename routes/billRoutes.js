@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const auth = require("../middleware/auth");
 const upload = require("../middleware/upload");
-const { uploadBill,  assignMoney, recordPayment, splitExpense, getBillDetails, settleAssignments, assignEqually, Settlements, markAssignmentPaid, getAllBills } = require("../controllers/billController");
+const { uploadBill,  assignMoney, recordPayment, splitExpense, getBillDetails, settleAssignments, assignEqually, Settlements, markAssignmentPaid, getAllBills, createManualBill } = require("../controllers/billController");
 // const { parse } = require("path");
 
 router.post("/upload", auth,upload.single("bill"),uploadBill);
@@ -17,4 +17,5 @@ router.get("/getAssignments",auth, Settlements);
 router.post("/payment",auth,recordPayment);
 router.get("/split/:expenseId",auth,splitExpense);
 router.get("/getAllBills", auth, getAllBills);
+router.post("/manual", auth, createManualBill);
 module.exports = router;

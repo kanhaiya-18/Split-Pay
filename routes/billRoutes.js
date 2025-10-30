@@ -19,4 +19,5 @@ router.get("/split/:expenseId",auth,splitExpense);
 router.get("/getAllBills", auth, getAllBills);
 router.post("/manual", auth, createManualBill);
 router.delete("/deleteBill",auth,deleteBill);
+
 module.exports = router;

@@ -647,7 +647,7 @@ exports.Settlements = async (req, res) => {
 
 exports.deleteBill = async (req, res) => {
     try {
-        const { expenseId } = req.body; 
+        const { expenseId } = req.body;
 
         if (!expenseId) {
             return res.status(400).json({
@@ -657,7 +657,6 @@ exports.deleteBill = async (req, res) => {
         }
 
         const expense = await Expense.findById(expenseId);
-
         if (!expense) {
             return res.status(404).json({
                 success: false,
@@ -665,6 +664,27 @@ exports.deleteBill = async (req, res) => {
             });
         }
 
+        // Handle assignments and adjust user balances
+        const assignments = expense.assignments || [];
+
+        for (const a of assignments) {
+            const { from, to, amount } = a;
+
+            const userFrom = await User.findById(from);
+            const userTo = await User.findById(to);
+
+            if (userFrom) {
+                userFrom.youOwe = (userFrom.youOwe || 0) - amount;
+                await userFrom.save();
+            }
+
+            if (userTo) {
+                userTo.youAreOwed = (userTo.youAreOwed || 0) - amount;
+                await userTo.save();
+            }
+        }
+
+        // Delete the expense
         const deletedExpense = await Expense.findByIdAndDelete(expenseId);
 
         return res.status(200).json({
@@ -680,4 +700,3 @@ exports.deleteBill = async (req, res) => {
         });
     }
 };
-

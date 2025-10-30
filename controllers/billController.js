@@ -5,6 +5,34 @@ const mongoose = require("mongoose");
 const extractTextFromImage = require("../utils/ocr");
 const parseBillText = require("../utils/llmParser");
 
+// Get all bills for a specific group (uses group from req.body like Settlements)
+exports.getAllBills = async (req, res) => {
+    try {
+        const { group } = req.body;
+        if (!group) {
+            return res.status(400).json({ success: false, message: "Group ID missing" });
+        }
+
+        // Find expenses in the given group
+        const expenses = await Expense.find({ group })
+            .populate("group", "name members")
+            .populate("createdBy", "name email")
+            .populate("assignments.from", "name email")
+            .populate("assignments.to", "name email")
+            .sort({ createdAt: -1 });
+
+        return res.status(200).json({
+            success: true,
+            bills: expenses,
+            count: expenses.length,
+            message: "Bills fetched successfully"
+        });
+    } catch (err) {
+        console.error("Error in getAllBills:", err);
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
 exports.uploadBill = async (req, res) => {
     try {
         if (!req.file) {
@@ -36,8 +64,17 @@ exports.uploadBill = async (req, res) => {
                 0
             );
 
+        // Derive a reliable bill name
+        const fallbackFromFilename = (req.file.originalname || "")
+            .replace(/\.[^/.]+$/, "") // drop extension
+            .trim();
+        const providedBillName = (req.body.billName || "").trim();
+        const parsedBillName = (structuredData.billName || "").trim();
+        const billName = parsedBillName || providedBillName || fallbackFromFilename || "Untitled Bill";
+
         // 🧱 Step 4: Create Expense in MongoDB with parsed details
         const expense = await Expense.create({
+            billName,
             group: req.body.groupId,
             createdBy: req.user.id,
             billImageUrl: req.file.path,

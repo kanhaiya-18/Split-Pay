@@ -5,25 +5,58 @@ const mongoose = require("mongoose");
 const extractTextFromImage = require("../utils/ocr");
 const parseBillText = require("../utils/llmParser");
 
-// Create a manual bill (no OCR/LLM), expects groupId, totalAmount, billName, items
+// Create a manual bill (no OCR/LLM)
 exports.createManualBill = async (req, res) => {
     try {
-        const { groupId, totalAmount, items, billName } = req.body;
+        const {
+            groupId,
+            billName,
+            items = [],
+            totalAmount,
+            splitMethod,
+            assignments = [],
+            payments = [],
+            billImageUrl
+        } = req.body;
 
-        if (!groupId || typeof totalAmount !== "number" || !billName) {
+        if (!groupId || !billName) {
             return res.status(400).json({
                 success: false,
-                message: "Missing required fields: groupId, totalAmount (number), billName"
+                message: "Missing required fields: groupId, billName"
             });
         }
+
+        const computedTotal = typeof totalAmount === "number"
+            ? totalAmount
+            : (Array.isArray(items)
+                ? items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 1), 0)
+                : 0);
+
+        const allowedSplit = ["equal", "per-item", "money"]; 
+        const finalSplitMethod = allowedSplit.includes(splitMethod) ? splitMethod : "equal";
+
+        const sanitizedAssignments = Array.isArray(assignments)
+            ? assignments
+                .filter(a => a && a.from && a.to && typeof a.amount === "number")
+                .map(a => ({ from: a.from, to: a.to, amount: a.amount }))
+            : [];
+
+        const sanitizedPayments = Array.isArray(payments)
+            ? payments
+                .filter(p => p && p.user && typeof p.amount === "number")
+                .map(p => ({ user: p.user, amount: p.amount, method: p.method || "cash" }))
+            : [];
 
         const expense = await Expense.create({
             billName: (billName || "").trim() || "Untitled Bill",
             group: groupId,
             createdBy: req.user.id,
-            totalAmount: totalAmount,
+            billImageUrl: billImageUrl || undefined,
+            totalAmount: computedTotal,
             items: Array.isArray(items) ? items : [],
-            splitMethod: "equal"
+            splitMethod: finalSplitMethod,
+            assignments: sanitizedAssignments,
+            payments: sanitizedPayments
         });
 
         return res.status(200).json({

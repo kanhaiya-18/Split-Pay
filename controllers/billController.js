@@ -5,10 +5,10 @@ const mongoose = require("mongoose");
 const extractTextFromImage = require("../utils/ocr");
 const parseBillText = require("../utils/llmParser");
 
-// Get all bills for a specific group (uses group from req.body like Settlements)
+// Get all bills for a specific group (group id from query parameter)
 exports.getAllBills = async (req, res) => {
     try {
-        const { group } = req.body;
+        const { group } = req.query;
         if (!group) {
             return res.status(400).json({ success: false, message: "Group ID missing" });
         }

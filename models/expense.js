@@ -25,6 +25,7 @@ const itemSchema = new mongoose.Schema({
 });
 
 const expenseSchema = new mongoose.Schema({
+    billName: { type: String, required: true },
     group: { type: mongoose.Schema.Types.ObjectId, ref: "Group", required: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     billImageUrl: String,

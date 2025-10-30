@@ -644,3 +644,40 @@ exports.Settlements = async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 };
+
+exports.deleteBill = async (req, res) => {
+    try {
+        const { expenseId } = req.body; 
+
+        if (!expenseId) {
+            return res.status(400).json({
+                success: false,
+                message: "Expense ID is required.",
+            });
+        }
+
+        const expense = await Expense.findById(expenseId);
+
+        if (!expense) {
+            return res.status(404).json({
+                success: false,
+                message: "No expense found with this ID.",
+            });
+        }
+
+        const deletedExpense = await Expense.findByIdAndDelete(expenseId);
+
+        return res.status(200).json({
+            success: true,
+            message: "Expense deleted successfully.",
+            deletedExpense,
+        });
+
+    } catch (err) {
+        return res.status(500).json({
+            success: false,
+            message: err.message || "Server error while deleting expense.",
+        });
+    }
+};
+

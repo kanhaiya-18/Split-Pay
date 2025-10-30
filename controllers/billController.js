@@ -59,6 +59,16 @@ exports.createManualBill = async (req, res) => {
             payments: sanitizedPayments
         });
 
+        // Update user tallies based on assignments (mirror settleAssignments behavior)
+        for (const a of sanitizedAssignments) {
+            if (!a || typeof a.amount !== "number" || a.amount <= 0) continue;
+            const fromId = a.from?.toString();
+            const toId = a.to?.toString();
+            if (!fromId || !toId || fromId === toId) continue;
+            await User.findByIdAndUpdate(toId, { $inc: { youAreOwed: a.amount } });
+            await User.findByIdAndUpdate(fromId, { $inc: { youOwe: a.amount } });
+        }
+
         return res.status(200).json({
             success: true,
             expense,

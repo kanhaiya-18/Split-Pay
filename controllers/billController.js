@@ -5,6 +5,40 @@ const mongoose = require("mongoose");
 const extractTextFromImage = require("../utils/ocr");
 const parseBillText = require("../utils/llmParser");
 
+// Create a manual bill (no OCR/LLM), expects groupId, totalAmount, billName, items
+exports.createManualBill = async (req, res) => {
+    try {
+        const { groupId, totalAmount, items, billName } = req.body;
+
+        if (!groupId || typeof totalAmount !== "number" || !billName) {
+            return res.status(400).json({
+                success: false,
+                message: "Missing required fields: groupId, totalAmount (number), billName"
+            });
+        }
+
+        const expense = await Expense.create({
+            billName: (billName || "").trim() || "Untitled Bill",
+            group: groupId,
+            createdBy: req.user.id,
+            totalAmount: totalAmount,
+            items: Array.isArray(items) ? items : [],
+            splitMethod: "equal"
+        });
+
+        return res.status(200).json({
+            success: true,
+            expense,
+            message: "Manual expense created successfully"
+        });
+    } catch (err) {
+        return res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+};
+
 // Get all bills for a specific group (group id from query parameter)
 exports.getAllBills = async (req, res) => {
     try {

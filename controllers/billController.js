@@ -4,6 +4,7 @@ const User = require("../models/user");
 const mongoose = require("mongoose");
 const extractTextFromImage = require("../utils/ocr");
 const parseBillText = require("../utils/llmParser");
+const fs = require("fs");
 
 // Create a manual bill (no OCR/LLM)
 exports.createManualBill = async (req, res) => {
@@ -358,7 +359,7 @@ exports.settleAssignments = async (req, res) => {
                 $inc: { youOwe: a.amount }
             });
         }
-        
+
         expense.isSettled = true;
         await expense.save();
 
@@ -692,11 +693,11 @@ exports.deleteBill = async (req, res) => {
                 message: "No expense found with this ID.",
             });
         }
-
         // Handle assignments and adjust user balances
         const assignments = expense.assignments || [];
 
         for (const a of assignments) {
+            if(a.isPaid)continue;
             const { from, to, amount } = a;
 
             const userFrom = await User.findById(from);
@@ -712,10 +713,12 @@ exports.deleteBill = async (req, res) => {
                 await userTo.save();
             }
         }
-
+        
         // Delete the expense
         const deletedExpense = await Expense.findByIdAndDelete(expenseId);
-
+        if (expense.billImageUrl && fs.existsSync(expense.billImageUrl)) {
+            fs.unlinkSync(expense.billImageUrl);
+        }
         return res.status(200).json({
             success: true,
             message: "Expense deleted successfully.",

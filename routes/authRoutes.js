@@ -3,7 +3,7 @@ const router = express.Router();
 
 //import controllers
 const {signUp,login,updateProfile, changePassword, getUserDetails} = require("../controllers/authController");
-const {createGroup, getGroup, deleteGroup, getAllGroup} = require("../controllers/groupController");
+const {createGroup, getGroup, deleteGroup, getAllGroup,getBalance} = require("../controllers/groupController");
 
 //import middleware 
 const auth = require("../middleware/auth");
@@ -16,5 +16,6 @@ router.get("/getUserDetails",auth,getUserDetails);
 router.post("/group/create",auth,createGroup);
 router.get("/group/get/:id",auth,getGroup);
 router.get("/group/getAll",auth,getAllGroup);
+router.get("/group/balance/:groupId",auth,getBalance);
 router.delete("/group/delete/:id",auth,deleteGroup);
 module.exports = router;

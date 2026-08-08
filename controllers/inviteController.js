@@ -8,6 +8,14 @@ exports.sendInvite = async(req,res) => {
         const {groupId,friendMail} = req.body;
         //get the senders id 
         const senderId = req.user.id;
+
+        if (!groupId || !friendMail) {
+            return res.status(400).json({
+                success: false,
+                message: "groupId and friendMail are required"
+            });
+        }
+        
         //find the group
         const group = await Group.findById(groupId);
         if(!group)

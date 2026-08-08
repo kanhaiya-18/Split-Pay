@@ -12,7 +12,7 @@ async function parseBillText(ocrText) {
   Example format:
   {
     "items": [
-      { "name": "Paneer Butter Masala", "price": 80, "quantity": 2," },
+      { "name": "Paneer Butter Masala", "price": 80, "quantity": 2" },
       { "name": "Kerala Parata", "price": 20, "quantity": 4 }
     ],
     "total": 240
@@ -24,8 +24,12 @@ async function parseBillText(ocrText) {
 
   try {
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { contents: [{ parts: [{ text: prompt }] }] }
+      `https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      { contents: [
+        {
+          role : "user",
+          parts: [{ text: prompt }] }] 
+        }
     );
 
     const modelResponse =
@@ -42,7 +46,10 @@ async function parseBillText(ocrText) {
     const parsed = JSON.parse(jsonMatch[0]);
     return parsed;
   } catch (err) {
-    console.error("Gemini Parsing Error:", err.message);
+    console.error(
+      "Gemini FULL ERROR:",
+      err.response?.data || err.message
+    );
     return null;
   }
 }

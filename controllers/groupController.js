@@ -3,7 +3,11 @@ const Group = require("../models/Group");
 //creation of group
 exports.createGroup = async (req, res) => {
     try {
-        const { name, members } = req.body;
+        const { name, mems } = req.body;
+        const members = []
+        if(mems)
+        members.push(mems)
+        members.push(req.user.id);
         const makegroup = await Group.create({ name, members, createdBy: req.user.id });
         if (!makegroup) {
             return res.status(400).json({

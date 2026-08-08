@@ -51,12 +51,12 @@ exports.createManualBill = async (req, res) => {
             billName: (billName || "").trim() || "Untitled Bill",
             group: groupId,
             createdBy: req.user.id,
+            paidBy: req.body.paidBy || req.user.id,
             billImageUrl: billImageUrl || undefined,
             totalAmount: computedTotal,
             items: Array.isArray(items) ? items : [],
             splitMethod: finalSplitMethod,
-            assignments: sanitizedAssignments,
-            payments: sanitizedPayments
+            assignments: sanitizedAssignments
         });
 
         // Update user tallies based on assignments (mirror settleAssignments behavior)
@@ -119,11 +119,11 @@ exports.uploadBill = async (req, res) => {
             });
         }
 
-        // 🧠 Step 1: Extract text from image (OCR)
+        //  Extract text from image (OCR)
         const text = await extractTextFromImage(req.file.path);
         // console.log("🧾 Extracted Text:", text);
 
-        // 🧩 Step 2: Parse structured data using Gemini
+        //  Parse structured data using Gemini
         const structuredData = await parseBillText(text);
 
         if (!structuredData || !structuredData.items) {
@@ -133,7 +133,7 @@ exports.uploadBill = async (req, res) => {
             });
         }
 
-        // 🧮 Step 3: Calculate total amount if Gemini didn't provide one
+        // Step 3: Calculate total amount if Gemini didn't provide one
         const total =
             structuredData.total ||
             structuredData.items.reduce(
@@ -149,18 +149,19 @@ exports.uploadBill = async (req, res) => {
         const parsedBillName = (structuredData.billName || "").trim();
         const billName = parsedBillName || providedBillName || fallbackFromFilename || "Untitled Bill";
 
-        // 🧱 Step 4: Create Expense in MongoDB with parsed details
+        //Step 4: Create Expense in MongoDB with parsed details
         const expense = await Expense.create({
             billName,
             group: req.body.groupId,
             createdBy: req.user.id,
+            paidBy: req.body.paidBy || req.user.id,
             billImageUrl: req.file.path,
             totalAmount: total,
             items: structuredData.items,
             splitMethod: "equal",
         });
 
-        // ✅ Step 5: Send structured data to frontend
+        //  Step 5: Send structured data to frontend
         res.status(200).json({
             success: true,
             expense,
@@ -234,44 +235,41 @@ exports.getBillDetails = async (req, res) => {
 //assign the amount to the members of the group 
 exports.assignMoney = async (req, res) => {
     try {
-        const { expenseId, assignments } = req.body;
-        if (!expenseId || !assignments) {
-            return res.status(400).json({ success: false, message: "expenseId or assignment doesn't exist" });
+        const { expenseId, assignments,paidBy } = req.body;
+        if (!expenseId || !assignments || !paidBy) {
+            return res.status(400).json({ success: false, message: "expenseId or assignment or paidBy doesn't exist" });
         }
         // get the expense from expenseId
         const expense = await Expense.findById(expenseId).populate("group");
         if (!expense) {
             return res.status(404).json({ success: false, message: "expense not found" });
         }
+        //validate the paidBy user
+        const validPaidUser = await User.findById(paidBy);
+        if(!validPaidUser){
+            return res.status(401).json({success : false, message: "not a valid user who paid"})
+        }
         // validate users belong to the group
         const groupMembersIds = (await Group.findById(expense.group._id)).members.map(m => m.toString());
         let sumAssigned = 0;
         // Validate users belong to group
         for (let a of assignments) {
-            if (!a.from || !a.to || typeof a.amount !== "number") {
+            if (!a.from || typeof a.amount !== "number") {
                 return res.status(400).json({ success: false, message: "Each assignment needs from, to, and numeric amount" });
             }
-            if (!groupMembersIds.includes(a.from.toString()) || !groupMembersIds.includes(a.to.toString())) {
-                return res.status(400).json({ success: false, message: `Invalid assignment: ${a.from} or ${a.to} not in group` });
+            if (!groupMembersIds.includes(a.from.toString())) {
+                return res.status(400).json({ success: false, message: `Invalid assignment: ${a.from} not in group` });
             }
-            sumAssigned += Number(a.amount || 0);
+            // sumAssigned += Number(a.amount || 0);
         }
-
-        // allow small rounding tolerance (0.5)
-        // const tolerance = 0.5;
-        // if (Math.abs(sumAssigned - (expense.totalAmount || 0)) > tolerance) {
-        //     return res.status(400).json({
-        //         success: false,
-        //         message: `Assigned sum (${sumAssigned}) does not match totalAmount (${expense.totalAmount}).`
-        //     });
-        // }
 
         //now save assignment
         expense.assignments = assignments.map(a => ({
             from: a.from, // who owes
-            to: a.to,     // who should receive
+            to: paidBy,     // who should receive
             amount: a.amount
         }));
+        expense.paidBy = paidBy;
 
         expense.splitMethod = "money";
         await expense.save();
@@ -306,7 +304,7 @@ exports.assignEqually = async (req, res) => {
         const perUserAmount = parseFloat((expense.totalAmount / userIds.length).toFixed(2));
         const assignments = [];
         for (const userId of userIds) {
-            if (userId === paidBy) continue; // Skip the payer
+            if (userId === paidBy) continue;
             assignments.push({
                 from: userId,
                 to: paidBy,
@@ -314,6 +312,7 @@ exports.assignEqually = async (req, res) => {
             });
         }
         expense.assignments = assignments;
+        expense.paidBy = paidBy;
         expense.splitMethod = "equal";
         await expense.save();
         return res.status(200).json({ success: true, expense, message: "Expense assigned equally successfully" });
@@ -338,27 +337,30 @@ exports.settleAssignments = async (req, res) => {
         if (!expense.group.members.map(m => m.toString()).includes(requestedId)) {
             return res.status(403).json({ success: false, message: "You are not a member of this group" });
         }
-
+        if (expense.isSettled) {
+            return res.status(400).json({ success: false, message: "Assignments for this bill are already settled" });
+        }
         for (const a of expense.assignments) {
             if (!a || a.amount <= 0) continue;
 
             const fromId = a.from?._id?.toString() || a.from?.toString();
             const toId = a.to?._id?.toString() || a.to?.toString();
 
-            // 🧩 Skip invalid or self-assigning transactions
             if (!fromId || !toId || fromId === toId) continue;
 
-            // 🟢 Increase receiver’s “youAreOwed”
+            // Increase receiver’s “youAreOwed”
             await User.findByIdAndUpdate(toId, {
                 $inc: { youAreOwed: a.amount }
             });
 
-            // 🔴 Increase payer’s “youOwe”
+            //  Increase payer’s “youOwe”
             await User.findByIdAndUpdate(fromId, {
                 $inc: { youOwe: a.amount }
             });
         }
-
+        
+        expense.isSettled = true;
+        await expense.save();
 
         const updatedExpense = await Expense.findById(expenseId)
             .populate("assignments.from", "name email")
@@ -377,178 +379,196 @@ exports.settleAssignments = async (req, res) => {
 };
 
 // Record the payment
-exports.recordPayment = async (req, res) => {
-    try {
-        const { expenseId, amount, method, paidBy } = req.body;
-        const requestedId = req.user.id;
-        const payerId = paidBy || requestedId;
+// exports.recordPayment = async (req, res) => {
+//     try {
+//         const { expenseId, amount, method, paidBy } = req.body;
+//         const requestedId = req.user.id;
+//         const payerId = paidBy || requestedId;
 
-        if (!expenseId || !amount) {
-            return res.status(400).json({
-                success: false,
-                message: "Please provide expenseId and amount"
-            });
-        }
+//         if (!expenseId || !amount) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Please provide expenseId and amount"
+//             });
+//         }
 
-        //  Find the expense
-        const expense = await Expense.findById(expenseId).populate("group");
-        if (!expense) {
-            return res.status(404).json({
-                success: false,
-                message: "Expense not found"
-            });
-        }
+//         //  Find the expense
+//         const expense = await Expense.findById(expenseId).populate("group");
+//         if (!expense) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Expense not found"
+//             });
+//         }
 
-        // Find the group
-        const group = await Group.findById(expense.group);
-        if (!group) {
-            return res.status(404).json({
-                success: false,
-                message: "Group not found"
-            });
-        }
+//         // Find the group
+//         const group = await Group.findById(expense.group);
+//         if (!group) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: "Group not found"
+//             });
+//         }
 
-        // Validate that both users are group members
-        const groupMemberIds = group.members.map(m => m.toString());
-        if (!groupMemberIds.includes(requestedId)) {
-            return res.status(403).json({
-                success: false,
-                message: "You are not a member of this group"
-            });
-        }
+//         // Validate that both users are group members
+//         const groupMemberIds = group.members.map(m => m.toString());
+//         if (!groupMemberIds.includes(requestedId)) {
+//             return res.status(403).json({
+//                 success: false,
+//                 message: "You are not a member of this group"
+//             });
+//         }
 
-        if (!groupMemberIds.includes(payerId)) {
-            return res.status(400).json({
-                success: false,
-                message: "The specified payer is not a member of this group"
-            });
-        }
-        //Actually record the payment now
-        if (!expense.payments) expense.payments = [];
-        expense.payments.push({
-            user: payerId,
-            amount,
-            method: method || "cash"
-        });
+//         if (!groupMemberIds.includes(payerId)) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "The specified payer is not a member of this group"
+//             });
+//         }
+//         //Actually record the payment now
+//         if (!expense.payments) expense.payments = [];
+//         expense.payments.push({
+//             user: payerId,
+//             amount,
+//             method: method || "cash"
+//         });
 
-        // Save the expense
-        await expense.save();
+//         // Save the expense
+//         await expense.save();
 
-        //  Fetch populated version for clean response
-        const updatedExpense = await Expense.findById(expenseId)
-            .populate("payments.user", "name email")
-            .populate("assignments.user", "name email")
-            .populate("group", "groupName");
-        //update the user db 
-        // const UpdatedinUser = await User.findByIdAndUpdate(
-        //     payerId,
-        //     { $inc: { youAreOwed: amount } },
-        //     { new: true }
-        // );
-        if (!UpdatedinUser) {
-            return res.status(400).json({ success: false, message: "it has not been updated in userDB" });
-        }
-        // Return
-        return res.status(200).json({
-            success: true,
-            message: `Payment of ₹${amount} recorded successfully (paid by user ${payerId})`,
-            expense: updatedExpense
-        });
-    } catch (err) {
-        console.error("Error in recordPayment:", err);
-        return res.status(500).json({
-            success: false,
-            message: err.message
-        });
-    }
-};
+//         //  Fetch populated version for clean response
+//         const updatedExpense = await Expense.findById(expenseId)
+//             .populate("payments.user", "name email")
+//             .populate("assignments.user", "name email")
+//             .populate("group", "groupName");
+//         //update the user db 
+//         // const UpdatedinUser = await User.findByIdAndUpdate(
+//         //     payerId,
+//         //     { $inc: { youAreOwed: amount } },
+//         //     { new: true }
+//         // );
+//         if (!UpdatedinUser) {
+//             return res.status(400).json({ success: false, message: "it has not been updated in userDB" });
+//         }
+//         // Return
+//         return res.status(200).json({
+//             success: true,
+//             message: `Payment of ₹${amount} recorded successfully (paid by user ${payerId})`,
+//             expense: updatedExpense
+//         });
+//     } catch (err) {
+//         console.error("Error in recordPayment:", err);
+//         return res.status(500).json({
+//             success: false,
+//             message: err.message
+//         });
+//     }
+// };
 
 
 exports.splitExpense = async (req, res) => {
     try {
         const { expenseId } = req.params;
 
-        // 1️⃣ Fetch expense with all populated fields
+        // Fetch expense with populated fields
         const expense = await Expense.findById(expenseId)
-            .populate("assignments.user", "name email")
-            .populate("payments.user", "name email")
-            .populate("group", "groupName");
+            .populate("paidBy", "name email")
+            .populate("assignments.from", "name email")
+            .populate("assignments.to", "name email")
+            .populate("group", "name members")
+            .populate("createdBy", "name email");
 
         if (!expense) {
             return res.status(404).json({ success: false, message: "Expense not found" });
         }
 
-        const totalAmount = expense.totalAmount;
-        const perUser = [];
+        // Determine the single payer (paidBy)
+        let payerUser = expense.paidBy;
+        if (!payerUser && expense.assignments.length > 0 && expense.assignments[0].to) {
+            payerUser = expense.assignments[0].to;
+        }
 
-        // 2️⃣ Build a map of assigned and paid
+        const totalAmount = expense.totalAmount || 0;
+        const payerId = payerUser ? payerUser._id.toString() : null;
+
+        // Map assigned amounts per user
         const assignedMap = {};
         for (const a of expense.assignments || []) {
-            const userId =
-                typeof a.user === "object" ? a.user._id.toString() : a.user.toString();
-            assignedMap[userId] = (assignedMap[userId] || 0) + a.amount;
+            if (!a.from) continue;
+            const fromId = typeof a.from === "object" ? a.from._id.toString() : a.from.toString();
+            assignedMap[fromId] = (assignedMap[fromId] || 0) + (a.amount || 0);
         }
 
-        const paidMap = {};
-        for (const p of expense.payments || []) {
-            const userId =
-                typeof p.user === "object" ? p.user._id.toString() : p.user.toString();
-            paidMap[userId] = (paidMap[userId] || 0) + p.amount;
-        }
+        // Calculate total amount assigned to other members
+        const totalAssignedToOthers = Object.values(assignedMap).reduce((sum, val) => sum + val, 0);
 
-        // 3️⃣ Collect all users from both maps
-        const userIds = new Set([...Object.keys(assignedMap), ...Object.keys(paidMap)]);
+        // Build perUser list
+        const perUser = [];
+        const userMap = new Map();
 
-        // 4️⃣ Build per-user summary
-        for (const userId of userIds) {
-            const assigned = assignedMap[userId] || 0;
-            const paid = paidMap[userId] || 0;
-            const net = paid - assigned;
-
-            const user =
-                expense.assignments.find(a => a.user._id?.toString() === userId)?.user ||
-                expense.payments.find(p => p.user._id?.toString() === userId)?.user;
-
-            perUser.push({
-                userId,
-                name: user?.name || "Unknown",
-                email: user?.email || "",
-                assigned,
-                paid,
-                net
+        // 1. Add payerUser entry
+        if (payerUser) {
+            const payerShare = Math.max(0, parseFloat((totalAmount - totalAssignedToOthers).toFixed(2)));
+            userMap.set(payerId, {
+                userId: payerId,
+                name: payerUser.name,
+                email: payerUser.email,
+                assigned: payerShare,
+                paid: totalAmount,
+                net: totalAssignedToOthers // Positive net balance owed to payer
             });
         }
 
-        // 5️⃣ Calculate settlements (who owes whom)
-        const debtors = perUser.filter(u => u.net < 0);
-        const creditors = perUser.filter(u => u.net > 0);
-        const settlements = [];
+        // 2. Add debtor entries from assignments
+        for (const a of expense.assignments || []) {
+            if (!a.from) continue;
+            const fromUser = typeof a.from === "object" ? a.from : null;
+            const fromId = fromUser ? fromUser._id.toString() : a.from.toString();
 
-        for (const debtor of debtors) {
-            let amountToSettle = Math.abs(debtor.net);
+            if (fromId === payerId) continue;
 
-            for (const creditor of creditors) {
-                if (amountToSettle <= 0) break;
-
-                const payAmount = Math.min(amountToSettle, creditor.net);
-                if (payAmount > 0) {
-                    settlements.push({
-                        from: debtor.name,
-                        to: creditor.name,
-                        amount: payAmount
-                    });
-
-                    debtor.net += payAmount;
-                    creditor.net -= payAmount;
-                    amountToSettle -= payAmount;
-                }
-            }
+            const assignedAmt = a.amount || 0;
+            userMap.set(fromId, {
+                userId: fromId,
+                name: fromUser ? fromUser.name : "Unknown",
+                email: fromUser ? fromUser.email : "",
+                assigned: assignedAmt,
+                paid: 0,
+                net: -assignedAmt // Negative net balance owed by debtor
+            });
         }
 
-        // 6️⃣ Send response
+        perUser.push(...Array.from(userMap.values()));
+
+        // Build settlements list (who owes paidBy)
+        const settlements = (expense.assignments || []).map(a => {
+            const fromUser = typeof a.from === "object" ? a.from : { name: "Unknown" };
+            const toUser = typeof a.to === "object" ? a.to : (payerUser || { name: "Payer" });
+
+            return {
+                assignmentId: a._id,
+                from: {
+                    id: fromUser._id,
+                    name: fromUser.name,
+                    email: fromUser.email
+                },
+                to: {
+                    id: toUser._id,
+                    name: toUser.name,
+                    email: toUser.email
+                },
+                amount: a.amount,
+                isPaid: a.isPaid || false,
+                paidAt: a.paidAt || null
+            };
+        });
+
         res.status(200).json({
             success: true,
+            expenseId: expense._id,
+            billName: expense.billName,
             totalAmount,
+            paidBy: payerUser ? { id: payerUser._id, name: payerUser.name, email: payerUser.email } : null,
             splitMethod: expense.splitMethod,
             perUser,
             settlements,
@@ -579,12 +599,21 @@ exports.markAssignmentPaid = async (req, res) => {
         if (currentUserId.toString() !== assignment.to.toString()) {
             return res.status(400).json({ success: false, message: "You are not authorized to mark this as paid" });
         }
-        assignment.amount -= amountPaid;
+        const remAmount = assignment.amount - amountPaid;
 
-        assignment.isPaid = assignment.amount <= 0 ? true : false;
-        if (assignment.isPaid)
+        assignment.isPaid = remAmount <= 0 ? true : false;
+        if (assignment.isPaid){
             assignment.paidAt = new Date();
+            assignment.amount = 0;
+        }
+            
 
+        if(!assignment.isPaid){
+            return res.status(400).json({
+                success: false,
+                message: "the amount is not enough"
+            })
+        }
         await expense.save();
 
         const ower = await User.findById(assignment.from);

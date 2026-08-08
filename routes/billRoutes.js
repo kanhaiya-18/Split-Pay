@@ -14,7 +14,7 @@ router.patch("/assign-Equally",auth,assignEqually);
 router.post("/settleAssignment",auth,settleAssignments);
 router.post("/markAsPaid",auth,markAssignmentPaid);
 router.get("/getAssignments",auth, Settlements);
-router.post("/payment",auth,recordPayment);
+// router.post("/payment",auth,recordPayment);
 router.get("/split/:expenseId",auth,splitExpense);
 router.get("/getAllBills", auth, getAllBills);
 router.post("/manual", auth, createManualBill);
